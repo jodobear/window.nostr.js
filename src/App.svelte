@@ -5,7 +5,8 @@
     generateSecretKey,
     type VerifiedEvent,
     type NostrEvent,
-    getPublicKey
+    getPublicKey,
+    finalizeEvent
   } from 'nostr-tools/pure'
   import {SimplePool, type SubCloser} from 'nostr-tools/pool'
   import {
@@ -16,10 +17,13 @@
     BUNKER_REGEX
   } from 'nostr-tools/nip46'
   import {NIP05_REGEX} from 'nostr-tools/nip05'
-  import {npubEncode} from 'nostr-tools/nip19'
+  import {npubEncode, decode} from 'nostr-tools/nip19'
   import {onMount} from 'svelte'
   import mediaQueryStore from './mediaQueryStore.js'
   import Spinner from './Spinner.svelte'
+  import type {Signer} from './signer.js'
+  import * as nip04 from 'nostr-tools/nip04'
+  import * as nip44 from 'nostr-tools/nip44'
 
   const currentDomain = window.location.hostname
   const currentProtocol = window.location.protocol
@@ -61,7 +65,8 @@
   let bunkerPointer: BunkerPointer | null
   let resolveBunker: (_: BunkerSigner) => void
   let rejectBunker: (_: string) => void
-  let bunker: Promise<BunkerSigner>
+  let plainkey = false
+  let signer: Promise<Signer>
   let connecting: boolean
   let connected: boolean
   let showAuth: string | null = null
@@ -109,7 +114,8 @@
   $: bunkerInputValueIsGood =
     bunkerInputValue &&
     (bunkerInputValue.match(BUNKER_REGEX) ||
-      bunkerInputValue.match(NIP05_REGEX))
+      bunkerInputValue.match(NIP05_REGEX) ||
+      (bunkerInputValue.startsWith('nsec1') && bunkerInputValue.length === 63))
 
   const bunkerSignerParams: BunkerSignerParams = {
     pool,
@@ -168,7 +174,7 @@
 
         try {
           if (!connecting && !connected) connectOrOpen()
-          const result = await (await bunker).getPublicKey()
+          const result = await (await signer).getPublicKey()
           resolve(result)
         } catch (error) {
           reject(error)
@@ -183,7 +189,7 @@
     async signEvent(event: NostrEvent): Promise<VerifiedEvent> {
       try {
         if (!connecting && !connected) connectOrOpen()
-        return await (await bunker).signEvent(event)
+        return await (await signer).signEvent(event)
       } finally {
         showConfirmAction = null
         close()
@@ -197,21 +203,21 @@
     nip04: {
       async encrypt(pubkey: string, plaintext: string): Promise<string> {
         if (!connecting && !connected) connectOrOpen()
-        return (await bunker).nip04Encrypt(pubkey, plaintext)
+        return (await signer).nip04Encrypt(pubkey, plaintext)
       },
       async decrypt(pubkey: string, ciphertext: string): Promise<string> {
         if (!connecting && !connected) connectOrOpen()
-        return (await bunker).nip04Decrypt(pubkey, ciphertext)
+        return (await signer).nip04Decrypt(pubkey, ciphertext)
       }
     },
     nip44: {
       async encrypt(pubkey: string, plaintext: string): Promise<string> {
         if (!connecting && !connected) connectOrOpen()
-        return (await bunker).nip44Encrypt(pubkey, plaintext)
+        return (await signer).nip44Encrypt(pubkey, plaintext)
       },
       async decrypt(pubkey: string, ciphertext: string): Promise<string> {
         if (!connecting && !connected) connectOrOpen()
-        return (await bunker).nip44Decrypt(pubkey, ciphertext)
+        return (await signer).nip44Decrypt(pubkey, ciphertext)
       }
     }
   }
@@ -219,7 +225,7 @@
   function reset() {
     close()
     bunkerPointer = null
-    bunker = new Promise((resolve, reject) => {
+    signer = new Promise((resolve, reject) => {
       resolveBunker = resolve
       rejectBunker = reject
     })
@@ -245,36 +251,43 @@
 
       if (value.startsWith('bunker://')) {
         bunkerInputValue = value
-        const event = new SubmitEvent('submit', {
-          bubbles: true,
-          cancelable: true
-        })
         nostrLogin = true
         open()
-        handleConnect(event)
+        handleConnect()
+      } else if (value.startsWith('nsec1')) {
+        bunkerInputValue = value
+        nostrLogin = true
+        open()
+        handleNsec()
       }
     }
 
     if (!bunkerPointer) {
       let data = localStorage.getItem(lskeys.BUNKER_POINTER)
       if (data) {
-        bunkerPointer = JSON.parse(data) as BunkerPointer
+        if (data.startsWith('nsec1')) {
+          bunkerInputValue = data
+          handleNsec()
+          identify()
+        } else {
+          bunkerPointer = JSON.parse(data) as BunkerPointer
 
-        // rebuild a bunker url from the pointer data so we can fill in the input
-        let bunkerURL = new URL(`bunker://${bunkerPointer.pubkey}`)
-        bunkerPointer.relays.forEach(relay => {
-          bunkerURL.searchParams.append('relay', relay)
-        })
-        if (bunkerPointer.secret) {
-          bunkerURL.searchParams.set('secret', bunkerPointer.secret)
+          // rebuild a bunker url from the pointer data so we can fill in the input
+          let bunkerURL = new URL(`bunker://${bunkerPointer.pubkey}`)
+          bunkerPointer.relays.forEach(relay => {
+            bunkerURL.searchParams.append('relay', relay)
+          })
+          if (bunkerPointer.secret) {
+            bunkerURL.searchParams.set('secret', bunkerPointer.secret)
+          }
+          bunkerInputValue = bunkerURL.toString()
+          // ~
+
+          identify()
+
+          // we must connect here so identify() works because we can't rely on the bunker params to read our pubkey
+          connect()
         }
-        bunkerInputValue = bunkerURL.toString()
-        // ~
-
-        identify()
-
-        // we must connect here so identify() works because we can't rely on the bunker params to read our pubkey
-        connect()
       }
     }
 
@@ -345,8 +358,10 @@
     ev.stopPropagation()
   }
 
-  async function handleConnect(ev: SubmitEvent) {
-    ev.preventDefault()
+  async function handleConnect(ev?: SubmitEvent) {
+    ev?.preventDefault?.()
+    plainkey = false
+
     try {
       bunkerPointer = await parseBunkerInput(bunkerInputValue)
       if (!bunkerPointer) {
@@ -372,6 +387,52 @@
         errorMessage = connectNip05Error
       }
       connecting = false
+    }
+  }
+
+  function handleNsec(ev?: SubmitEvent) {
+    ev?.preventDefault?.()
+
+    try {
+      const nsec = bunkerInputValue
+      const decoded = decode(nsec)
+      if (decoded.type === 'nsec') {
+        const sk = decoded.data
+        const pk = getPublicKey(sk)
+        plainkey = true
+        signer = Promise.resolve({
+          async getPublicKey() {
+            return pk
+          },
+          async signEvent(event) {
+            return finalizeEvent(event, sk)
+          },
+          async nip04Decrypt(thirdPartyPubkey, ciphertext) {
+            return nip04.decrypt(sk, thirdPartyPubkey, ciphertext)
+          },
+          async nip04Encrypt(thirdPartyPubkey, plaintext) {
+            return nip04.encrypt(sk, thirdPartyPubkey, plaintext)
+          },
+          async nip44Decrypt(thirdPartyPubkey, ciphertext) {
+            const conv = nip44.getConversationKey(sk, thirdPartyPubkey)
+            return nip44.decrypt(ciphertext, conv)
+          },
+          async nip44Encrypt(thirdPartyPubkey, plaintext) {
+            const conv = nip44.getConversationKey(sk, thirdPartyPubkey)
+            return nip44.encrypt(plaintext, conv)
+          }
+        })
+
+        nostrLogin = true
+        open()
+        errorMessage = ''
+        connecting = false
+        connected = true
+        identify()
+        localStorage.setItem(lskeys.BUNKER_POINTER, nsec)
+      }
+    } catch (error) {
+      console.error('failed to decode nsec:', error)
     }
   }
 
@@ -401,7 +462,9 @@
   }
 
   async function connect(b: BunkerSigner | undefined = undefined) {
-    b = b || new BunkerSigner(clientSecret, bunkerPointer!, bunkerSignerParams)
+    b =
+      b ||
+      BunkerSigner.fromBunker(clientSecret, bunkerPointer!, bunkerSignerParams)
     connecting = true
 
     let connectionTimeout = setTimeout(() => {
@@ -435,7 +498,7 @@
   async function identify() {
     let pubkey: string
     try {
-      pubkey = await (await bunker).getPublicKey()
+      pubkey = await (await signer).getPublicKey()
     } catch (err) {
       hasTriedToConnectButFailed = true
       return
@@ -450,10 +513,11 @@
     metadataSub = pool.subscribeMany(
       [
         'wss://purplepag.es',
+        'wss://indexer.coracle.social',
         'wss://relay.snort.social',
         'wss://relay.nos.social'
       ],
-      [{kinds: [0], authors: [pubkey]}],
+      {kinds: [0], authors: [pubkey]},
       {
         onevent(evt) {
           if ((identity!.event?.created_at || 0) >= evt.created_at) return
@@ -728,11 +792,17 @@
         <div class="text-center text-lg">
           How do you want to connect to Nostr?
         </div>
-        <form class="mb-1 mt-4 flex flex-col" on:submit={handleConnect}>
+        <form
+          class="mb-1 mt-4 flex flex-col"
+          on:submit={ev =>
+            bunkerInputValue.startsWith('nsec1')
+              ? handleNsec(ev)
+              : handleConnect(ev)}
+        >
           <!-- svelte-ignore a11y-autofocus -->
           <input
             class="box-border w-full rounded px-2 py-1 text-lg text-neutral-800 outline-none"
-            placeholder="user@provider or bunker://..."
+            placeholder="bunker://... or nsec1..."
             bind:this={bunkerInput}
             bind:value={bunkerInputValue}
             autofocus
@@ -819,10 +889,12 @@
           class="my-2 mt-6 block w-full cursor-pointer rounded border-0 px-2 py-1 text-lg text-white bg-{accent}-900 hover:bg-{accent}-950"
           on:click={handleDisconnect}>Disconnect</button
         >
-        <div class="mt-6 block break-all text-center text-sm">
-          This webpage is using the public key:<br />
-          {getPublicKey(clientSecret)}
-        </div>
+        {#if !plainkey}
+          <div class="mt-6 block break-all text-center text-xs">
+            This webpage is using the public key:<br />
+            {getPublicKey(clientSecret)}
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
