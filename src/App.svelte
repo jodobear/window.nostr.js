@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {pool} from '@nostr/gadgets/global'
   import QRCode from 'qrcode'
   import debounce from 'debounce'
   import {hexToBytes, bytesToHex, randomBytes} from '@noble/hashes/utils'
@@ -8,24 +9,26 @@
     type NostrEvent,
     getPublicKey,
     finalizeEvent
-  } from 'nostr-tools/pure'
-  import {SimplePool, type SubCloser} from 'nostr-tools/pool'
+  } from '@nostr/tools/pure'
+  import {type SubCloser} from '@nostr/tools/pool'
   import {
     BunkerSigner,
     type BunkerSignerParams,
     parseBunkerInput,
     type BunkerPointer,
     BUNKER_REGEX
-  } from 'nostr-tools/nip46'
-  import {NIP05_REGEX} from 'nostr-tools/nip05'
-  import {npubEncode, decode} from 'nostr-tools/nip19'
+  } from '@nostr/tools/nip46'
+  import {NIP05_REGEX} from '@nostr/tools/nip05'
+  import {npubEncode, decode} from '@nostr/tools/nip19'
   import {onMount} from 'svelte'
+  import type {Signer} from './signer.js'
+  import * as nip04 from '@nostr/tools/nip04'
+  import * as nip44 from '@nostr/tools/nip44'
+  import {createNostrConnectURI} from '@nostr/tools/nip46'
+
   import mediaQueryStore from './mediaQueryStore.js'
   import Spinner from './Spinner.svelte'
-  import type {Signer} from './signer.js'
-  import * as nip04 from 'nostr-tools/nip04'
-  import * as nip44 from 'nostr-tools/nip44'
-  import {createNostrConnectURI} from 'nostr-tools/nip46'
+  import {loadRelayList} from '@nostr/gadgets/lists'
 
   const currentDomain = window.location.hostname
   const currentProtocol = window.location.protocol
@@ -56,7 +59,6 @@
   }
 
   const win = window as any
-  const pool = new SimplePool()
   let bunkerInput: HTMLInputElement
   let bunkerInputValue: string
   let clientSecret: Uint8Array
@@ -585,13 +587,18 @@
       event: null
     }
 
+    const rl = await loadRelayList(pubkey)
+
     metadataSub = pool.subscribeMany(
-      [
-        'wss://purplepag.es',
-        'wss://indexer.coracle.social',
-        'wss://relay.snort.social',
-        'wss://relay.nos.social'
-      ],
+      rl.items
+        .filter(r => r.write)
+        .map(r => r.url)
+        .concat([
+          'wss://purplepag.es',
+          'wss://indexer.coracle.social',
+          'wss://relay.snort.social',
+          'wss://relay.nos.social'
+        ]),
       {kinds: [0], authors: [pubkey]},
       {
         onevent(evt) {
@@ -777,8 +784,8 @@
             A new window will now open, taking you to <strong
               >{new URL(showLogin).host}</strong
             >
-            where you can login and approve the permissions. If nothing happens,
-            ensure your browser is not blocking popups. <br />
+            where you can login and approve the permissions. If nothing happens, ensure
+            your browser is not blocking popups. <br />
             Afterward, you'll be redirected back to this page.
           </div>
           <button
@@ -797,8 +804,8 @@
             A new window will now open, taking you to <strong
               >{new URL(showConfirmAction).host}</strong
             >
-            where you can approve the current action. If nothing happens, ensure
-            your browser is not blocking popups.<br />
+            where you can approve the current action. If nothing happens, ensure your
+            browser is not blocking popups.<br />
             Afterward, you'll be redirected back to this page.
           </div>
           <button
@@ -821,8 +828,8 @@
             work with NIP-46 automatically when the user doesn't have an
             extension installed.
             <br />
-            It adds a small floating button on the side of the window that users
-            can use to create Nostr accuonts or connect to their NIP-46 bunkers.
+            It adds a small floating button on the side of the window that users can
+            use to create Nostr accuonts or connect to their NIP-46 bunkers.
           </p>
           <p class="mt-4">
             This tool is opensource, get the code from the <a

@@ -1,4 +1,4 @@
-import type {EventTemplate, VerifiedEvent} from 'nostr-tools/pure'
+import type {EventTemplate, VerifiedEvent} from '@nostr/tools/pure'
 
 export interface Signer {
   getPublicKey(): Promise<string>
