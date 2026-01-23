@@ -1,6 +1,7 @@
 <script lang="ts">
+  import QRCode from 'qrcode'
   import debounce from 'debounce'
-  import {hexToBytes, bytesToHex} from '@noble/hashes/utils'
+  import {hexToBytes, bytesToHex, randomBytes} from '@noble/hashes/utils'
   import {
     generateSecretKey,
     type VerifiedEvent,
@@ -24,6 +25,7 @@
   import type {Signer} from './signer.js'
   import * as nip04 from 'nostr-tools/nip04'
   import * as nip44 from 'nostr-tools/nip44'
+  import {createNostrConnectURI} from 'nostr-tools/nip46'
 
   const currentDomain = window.location.hostname
   const currentProtocol = window.location.protocol
@@ -46,6 +48,12 @@
       position
   export let startHidden: boolean
   export let compactMode: boolean
+  export let nostrConnectRelays: string[]
+  export let appMetadata: {
+    name: string
+    image: string
+    url: string
+  }
 
   const win = window as any
   const pool = new SimplePool()
@@ -87,6 +95,22 @@
   }
   let metadataSub: SubCloser | null
   let pendingRejections: ((reason?: any) => void)[] = []
+
+  // QR code related state
+  let qrCodeDataUrl: Promise<string>
+  let nostrConnectURI: string | undefined
+  let nostrConnectAbort: AbortController
+  let isCopied = false
+
+  async function copyNostrConnectUri() {
+    if (nostrConnectURI) {
+      await navigator.clipboard.writeText(nostrConnectURI)
+      isCopied = true
+      setTimeout(() => {
+        isCopied = false
+      }, 700)
+    }
+  }
 
   const connectBunkerError =
     'We could not connect to a NIP-46 bunker with that url, are you sure it is set up correctly?'
@@ -146,14 +170,58 @@
     }
   }, 500)
 
-  function open() {
+  async function open() {
     state = 'justopened'
     delayedUpdateState()
+
+    // nostrconnect:// QR code
+    const clientPubkey = getPublicKey(clientSecret)
+    nostrConnectURI = createNostrConnectURI({
+      clientPubkey,
+      secret: bytesToHex(randomBytes(8)),
+      relays: nostrConnectRelays,
+      name: appMetadata.name || location.hostname,
+      url: appMetadata.url || location.href.split('#')[0].split('?')[0],
+      image:
+        appMetadata.image ||
+        (
+          document.head.querySelector('link[rel~="icon"]') as
+            | HTMLLinkElement
+            | undefined
+        )?.href ||
+        location.origin + '/favicon.ico'
+    })
+    qrCodeDataUrl = QRCode.toDataURL(nostrConnectURI.toString(), {
+      width: 256,
+      margin: 2,
+      color: {dark: '#000000', light: '#FFFFFF'}
+    })
+
+    nostrConnectAbort = new AbortController()
+
+    try {
+      const bunker = await BunkerSigner.fromURI(
+        clientSecret,
+        nostrConnectURI,
+        bunkerSignerParams,
+        nostrConnectAbort.signal
+      )
+      bunkerPointer = bunker.bp
+      localStorage.setItem(lskeys.BUNKER_POINTER, JSON.stringify(bunkerPointer))
+      resolveBunker(bunker)
+      identify()
+    } catch (err) {
+      console.warn('nostrconnect:// QR code handling failed:', err)
+    } finally {
+      nostrConnectAbort.abort('window.nostr.js interaction finished')
+    }
   }
 
   function close() {
     state = 'justclosed'
     delayedUpdateState()
+
+    nostrConnectAbort?.abort?.('window.nostr.js widget closed')
   }
 
   function connectOrOpen() {
@@ -236,6 +304,7 @@
     connected = false
     metadataSub = null
     errorMessage = ''
+    nostrConnectURI = undefined
   }
 
   onMount(() => {
@@ -475,8 +544,14 @@
     try {
       await b.connect()
       connected = true
-      localStorage.setItem(lskeys.BUNKER_POINTER, JSON.stringify(bunkerPointer))
       close()
+
+      // every now and then try to update the relays
+      if (Date.now() % 20 === 0) {
+        await b.switchRelays()
+      }
+
+      localStorage.setItem(lskeys.BUNKER_POINTER, JSON.stringify(bunkerPointer))
       resolveBunker(b)
     } catch (err: any) {
       rejectBunker(err?.message || String(err))
@@ -792,6 +867,8 @@
         <div class="text-center text-lg">
           How do you want to connect to Nostr?
         </div>
+
+        <!-- Manual Input View -->
         <form
           class="mb-1 mt-4 flex flex-col"
           on:submit={ev =>
@@ -837,6 +914,7 @@
             </div>
           {/if}
         </form>
+
         {#if !connecting}
           <div class="mt-6 text-center text-sm leading-3">
             {#if hasTriedToConnectButFailed}
@@ -851,6 +929,81 @@
                 class="cursor-pointer border-0 bg-transparent text-sm text-white underline"
                 on:click={handleCreateAccount}>Sign up now</button
               >
+            {/if}
+          </div>
+        {/if}
+
+        <!-- QR Code View -->
+        {#if !connecting}
+          <div class="mt-4 text-center">
+            <div class="mb-2 text-sm">
+              Scan this QR code with a Nostr client to connect
+            </div>
+
+            {#if nostrConnectURI}
+              <div class="mb-4 flex justify-center">
+                {#await qrCodeDataUrl}
+                  <Spinner />
+                {:then qrCodeDataUrl}
+                  <div
+                    class="cursor-pointer"
+                    on:click={copyNostrConnectUri}
+                    on:keydown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        copyNostrConnectUri()
+                      }
+                    }}
+                  >
+                    <img
+                      src={qrCodeDataUrl}
+                      alt="Nostr Connect QR Code"
+                      class="rounded-lg bg-white p-2"
+                    />
+                  </div>
+                {:catch err}
+                  <p>{err}</p>
+                {/await}
+              </div>
+              {#if isCopied}
+                <div class="mb-38 mt-34 break-all text-xs text-gray-300">
+                  Copied!
+                </div>
+              {:else}
+                <div
+                  class="mb-4 cursor-pointer break-all text-xs text-gray-300 transition-all hover:text-gray-200"
+                  on:click={copyNostrConnectUri}
+                  on:keydown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      copyNostrConnectUri()
+                    }
+                  }}
+                  role="button"
+                  tabindex="0"
+                  title="Click to copy"
+                >
+                  {nostrConnectURI}
+                  <svg
+                    class="ml-1 inline-block h-3 w-3 align-middle"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                    />
+                  </svg>
+                </div>
+              {/if}
+            {:else}
+              <div class="mb-4 flex justify-center">
+                <Spinner />
+              </div>
             {/if}
           </div>
         {/if}

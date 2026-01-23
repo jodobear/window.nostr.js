@@ -28,6 +28,14 @@ The script supports some optional configurations to personalize the design:
     // element/modal are pushed to the extreme right/bottom and exit the
     // viewport. A style is injected in the html/body elements fix this.
     // This option permit to disable this default behavior
+    nostrConnectRelays: ['wss://bucket.coracle.social', 'wss://relay.nsec.app', 'wss://nos.lol', 'wss://relay.primal.net']
+    // For when prompting the user to a scan a QR code to login.
+    appMetadata: {
+      name: 'example app',
+      image: 'https://example.com/logo.png',
+      url: 'https://example.com',
+    }
+    // Values sent to the remote signer through the QR code, when undefined the current URL and domain name will be used.
   }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/window.nostr.js/dist/window.nostr.min.js"></script>

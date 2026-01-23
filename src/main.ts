@@ -38,7 +38,14 @@ const app = new App({
     accent: win.wnjParams?.accent || 'cyan',
     position: win.wnjParams?.position === 'bottom' ? 'bottom' : 'top',
     startHidden: win.wnjParams?.startHidden,
-    compactMode: win.wnjParams?.compactMode
+    compactMode: win.wnjParams?.compactMode,
+    nostrConnectRelays: win.wnjParams?.nostrConnectRelays || [
+      'wss://bucket.coracle.social',
+      'wss://relay.nsec.app',
+      'wss://nos.lol',
+      'wss://relay.primal.net'
+    ],
+    appMetadata: win.wnjParams?.appMetadata || {}
   }
 })
 
