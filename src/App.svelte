@@ -323,12 +323,12 @@
       if (value.startsWith('bunker://')) {
         bunkerInputValue = value
         nostrLogin = true
-        open()
+        if (!startHidden) open()
         handleConnect()
       } else if (value.startsWith('nsec1')) {
         bunkerInputValue = value
         nostrLogin = true
-        open()
+        if (!startHidden) open()
         handleNsec()
       }
     }
@@ -495,7 +495,7 @@
         })
 
         nostrLogin = true
-        open()
+        if (!startHidden) open()
         errorMessage = ''
         connecting = false
         connected = true
@@ -565,7 +565,7 @@
       showAuth = null
       showLogin = null
       showConfirmAction = null
-      if (nostrLogin) {
+      if (nostrLogin && !startHidden) {
         open()
       }
     }
