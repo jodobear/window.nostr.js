@@ -97,6 +97,52 @@
   }
   let metadataSub: SubCloser | null
   let pendingRejections: ((reason?: any) => void)[] = []
+  type PendingCall =
+    | {
+        kind: 'getPublicKey'
+        resolve: (value: string) => void
+        reject: (reason?: any) => void
+      }
+    | {
+        kind: 'signEvent'
+        event: NostrEvent
+        resolve: (value: VerifiedEvent) => void
+        reject: (reason?: any) => void
+      }
+  let pendingCalls: PendingCall[] = []
+
+  function removePendingRejection(reject: (reason?: any) => void) {
+    const idx = pendingRejections.indexOf(reject)
+    if (idx !== -1) {
+      pendingRejections.splice(idx, 1)
+    }
+  }
+
+  function enqueueCall(call: PendingCall) {
+    pendingCalls.push(call)
+    pendingRejections.push(call.reject)
+    if (!connecting && !connected) connectOrOpen()
+  }
+
+  async function flushPendingCalls() {
+    if (!connected || pendingCalls.length === 0) return
+    const calls = pendingCalls.splice(0)
+    for (const call of calls) {
+      try {
+        if (call.kind === 'getPublicKey') {
+          call.resolve(await (await signer).getPublicKey())
+        } else {
+          call.resolve(await (await signer).signEvent(call.event))
+          showConfirmAction = null
+          close()
+        }
+      } catch (error) {
+        call.reject(error)
+      } finally {
+        removePendingRejection(call.reject)
+      }
+    }
+  }
 
   // QR code related state
   let qrCodeDataUrl: Promise<string>
@@ -240,25 +286,30 @@
     isWnj: true,
     async getPublicKey(): Promise<string> {
       return new Promise<string>(async (resolve, reject) => {
-        pendingRejections.push(reject)
+        if (!connected) {
+          enqueueCall({kind: 'getPublicKey', resolve, reject})
+          return
+        }
 
+        pendingRejections.push(reject)
         try {
-          if (!connecting && !connected) connectOrOpen()
           const result = await (await signer).getPublicKey()
           resolve(result)
         } catch (error) {
           reject(error)
         } finally {
-          const idx = pendingRejections.indexOf(reject)
-          if (idx !== -1) {
-            pendingRejections.splice(idx, 1)
-          }
+          removePendingRejection(reject)
         }
       })
     },
     async signEvent(event: NostrEvent): Promise<VerifiedEvent> {
+      if (!connected) {
+        return new Promise<VerifiedEvent>((resolve, reject) => {
+          enqueueCall({kind: 'signEvent', event, resolve, reject})
+        })
+      }
+
       try {
-        if (!connecting && !connected) connectOrOpen()
         return await (await signer).signEvent(event)
       } finally {
         showConfirmAction = null
@@ -389,6 +440,7 @@
             )
           })
           pendingRejections = []
+          pendingCalls = []
         },
         configurable: true // this allows Object.defineProperty() to be called again
       })
@@ -461,7 +513,7 @@
     }
   }
 
-  function handleNsec(ev?: SubmitEvent) {
+  async function handleNsec(ev?: SubmitEvent) {
     ev?.preventDefault?.()
 
     try {
@@ -499,6 +551,7 @@
         errorMessage = ''
         connecting = false
         connected = true
+        await flushPendingCalls()
         identify()
         localStorage.setItem(lskeys.BUNKER_POINTER, nsec)
       }
@@ -555,6 +608,7 @@
 
       localStorage.setItem(lskeys.BUNKER_POINTER, JSON.stringify(bunkerPointer))
       resolveBunker(b)
+      await flushPendingCalls()
     } catch (err: any) {
       rejectBunker(err?.message || String(err))
     } finally {
