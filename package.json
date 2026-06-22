@@ -23,6 +23,7 @@
     "vite": "^5.1.0"
   },
   "dependencies": {
+    "@fiatjaf/promenade-trusted-dealer": "npm:@jsr/fiatjaf__promenade-trusted-dealer@^0.4.3",
     "@nostr/gadgets": "npm:@jsr/nostr__gadgets@^0.0.46",
     "@nostr/tools": "npm:@jsr/nostr__tools@^2.20.0",
     "@types/qrcode": "^1.5.6",

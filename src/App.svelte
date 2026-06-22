@@ -19,7 +19,13 @@
     BUNKER_REGEX
   } from '@nostr/tools/nip46'
   import {NIP05_REGEX} from '@nostr/tools/nip05'
-  import {npubEncode, decode} from '@nostr/tools/nip19'
+  import {npubEncode, nsecEncode, decode} from '@nostr/tools/nip19'
+  import {sha256} from '@noble/hashes/sha256'
+  import {
+    trustedKeyDeal,
+    hexPubShard,
+    hexShard
+  } from '@fiatjaf/promenade-trusted-dealer'
   import {onMount} from 'svelte'
   import type {Signer} from './signer.js'
   import * as nip04 from '@nostr/tools/nip04'
@@ -29,9 +35,6 @@
   import mediaQueryStore from './mediaQueryStore.js'
   import Spinner from './Spinner.svelte'
   import {loadRelayList} from '@nostr/gadgets/lists'
-
-  const currentDomain = window.location.hostname
-  const currentProtocol = window.location.protocol
 
   const mobileMode = mediaQueryStore('only screen and (max-width: 640px)')
   const lskeys = {
@@ -85,7 +88,6 @@
   let takingTooLong = false
   let hasTriedToConnectButFailed = false
   let creating: boolean
-  let awaitingCreation: boolean = false
   let errorMessage: string
   let showInfo = false
   let identity: null | {
@@ -149,6 +151,7 @@
   let nostrConnectURI: string | undefined
   let nostrConnectAbort: AbortController
   let isCopied = false
+  let nsecCopied = false
 
   async function copyNostrConnectUri() {
     if (nostrConnectURI) {
@@ -156,6 +159,16 @@
       isCopied = true
       setTimeout(() => {
         isCopied = false
+      }, 700)
+    }
+  }
+
+  async function copyNsec() {
+    if (bunkerInputValue) {
+      await navigator.clipboard.writeText(bunkerInputValue)
+      nsecCopied = true
+      setTimeout(() => {
+        nsecCopied = false
       }, 700)
     }
   }
@@ -361,7 +374,7 @@
   }
 
   onMount(() => {
-    // Verify Nstart callback if the hash contains "nostr-login"
+    // Check if hash contains "nostr-login"
     const hash = window.location.hash
     if (hash.startsWith('#nostr-login=')) {
       // Extract the value after "nostr-login="
@@ -728,8 +741,180 @@
     }
   }
 
-  function handleCreateAccount() {
-    window.location.href = `https://nstart.me?an=${currentDomain}&at=web&ac=${currentProtocol}//${currentDomain}&sfb=yes`
+  const POMEGRANATE_CENTRAL_URL = 'https://auth.njump.me'
+  const POMEGRANATE_OPERATORS = [
+    'https://po.f7z.io',
+    'https://po.njump.me',
+    'https://po.nostrver.se',
+    'https://po.coracle.social',
+    'https://po.jumble.social'
+  ]
+  const POMEGRANATE_THRESHOLD = 2
+
+  function handleGenerateIdentity() {
+    const sk = generateSecretKey()
+    bunkerInputValue = nsecEncode(sk)
+    handleNsec()
+  }
+
+  async function handleLoginGoogle() {
+    const popup = window.open(
+      `${POMEGRANATE_CENTRAL_URL}/login/google`,
+      'Pomegranate Google OAuth',
+      'width=600,height=600'
+    )
+    if (!popup) {
+      errorMessage = 'Popup blocked. Allow popups for this site.'
+      return
+    }
+
+    connecting = true
+    errorMessage = ''
+
+    const token = await new Promise<string>(resolve => {
+      function handler(event: MessageEvent) {
+        if (event.origin !== POMEGRANATE_CENTRAL_URL || !event.data?.token)
+          return
+        window.removeEventListener('message', handler)
+        popup!.close()
+        resolve(event.data.token)
+      }
+      window.addEventListener('message', handler, {once: true})
+    })
+
+    const evt = JSON.parse(atob(token))
+    const email =
+      evt.tags?.find((tag: string[]) => tag[0] === 'email')?.[1] || ''
+
+    let accountResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/account`, {
+      headers: {Authorization: `Token ${token}`}
+    })
+
+    if (accountResp.status === 404) {
+      const sk = generateSecretKey()
+      const session = crypto.randomUUID()
+
+      const skBignum = Array.from(sk).reduce<bigint>(
+        (acc, byte) => (acc << 8n) + BigInt(byte as number),
+        0n
+      )
+      const {shards} = trustedKeyDeal(
+        skBignum,
+        POMEGRANATE_THRESHOLD,
+        POMEGRANATE_OPERATORS.length
+      )
+
+      const regEvent = finalizeEvent(
+        {
+          kind: 20445,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ['threshold', String(POMEGRANATE_THRESHOLD)],
+            ...POMEGRANATE_OPERATORS.map((op, i) => [
+              'operator',
+              op,
+              hexPubShard(shards[i].pubShard)
+            ])
+          ],
+          content: ''
+        },
+        sk
+      )
+
+      const regResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/register`, {
+        method: 'POST',
+        body: JSON.stringify(regEvent),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Token ${token}`,
+          'X-Pomegranate-Session': session
+        }
+      })
+      if (!regResp.ok) {
+        errorMessage = 'Central registration failed'
+        connecting = false
+        return
+      }
+
+      const encoder = new TextEncoder()
+      for (let i = 0; i < POMEGRANATE_OPERATORS.length; i++) {
+        const opEvent = finalizeEvent(
+          {
+            kind: 20444,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ['central', POMEGRANATE_CENTRAL_URL],
+              ['email', email]
+            ],
+            content: hexShard(shards[i])
+          },
+          sk
+        )
+
+        const opResp = await fetch(`${POMEGRANATE_OPERATORS[i]}/po/register`, {
+          method: 'POST',
+          body: JSON.stringify(opEvent),
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Pomegranate-Operator-Token': bytesToHex(
+              sha256(encoder.encode(session + ':' + POMEGRANATE_OPERATORS[i]))
+            )
+          }
+        })
+        if (!opResp.ok) {
+          errorMessage = `Operator registration failed for ${POMEGRANATE_OPERATORS[i]}`
+          connecting = false
+          return
+        }
+      }
+
+      accountResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/account`, {
+        headers: {Authorization: `Token ${token}`}
+      })
+    }
+
+    if (!accountResp.ok) {
+      errorMessage = 'Account setup failed'
+      connecting = false
+      return
+    }
+
+    const profilesResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/profiles`, {
+      headers: {Authorization: `Token ${token}`}
+    })
+    if (!profilesResp.ok) {
+      errorMessage = 'Failed to get profiles'
+      connecting = false
+      return
+    }
+
+    let profiles = await profilesResp.json()
+
+    if (!profiles.find((p: any) => p.name === 'default')) {
+      await fetch(`${POMEGRANATE_CENTRAL_URL}/profiles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Token ${token}`
+        },
+        body: JSON.stringify({name: 'default'})
+      })
+      const refreshResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/profiles`, {
+        headers: {Authorization: `Token ${token}`}
+      })
+      if (refreshResp.ok) profiles = await refreshResp.json()
+    }
+
+    const defaultProfile = profiles.find((p: any) => p.name === 'default')
+    if (!defaultProfile) {
+      errorMessage = 'No default profile available'
+      connecting = false
+      return
+    }
+
+    bunkerInputValue = `bunker://${defaultProfile.handler_pubkey}?relay=${encodeURIComponent(POMEGRANATE_CENTRAL_URL.replace('http', 'ws'))}`
+    creating = false
+    await handleConnect()
   }
 </script>
 
@@ -903,17 +1088,23 @@
 
         <!-- Create account view ################### -->
       {:else if creating}
-        <div class="text-center text-lg">Create a Nostr account</div>
+        <div class="text-center text-lg">Login to Nostr</div>
         <div class="mt-4 text-base leading-5">
-          To use this Nostr app you need a profile. The following button opens a
-          wizard that help you to create your keypair and safely manage it in a
-          few steps. Are you ready?
+          Login with Google to create and manage a secure cloud-based keypair,
+          or generate a local private key you control yourself.
         </div>
         <button
           class="mt-4 block w-full cursor-pointer rounded border-0 px-2 py-1 text-lg text-white disabled:cursor-default disabled:bg-neutral-400 disabled:text-neutral-200 bg-{accent}-900 hover:bg-{accent}-950"
-          on:click={handleCreateAccount}
-          disabled={awaitingCreation}
-          >Create an account »
+          on:click={() => {
+            creating = false
+            handleLoginGoogle()
+          }}
+          >Login with Google »
+        </button>
+        <button
+          class="mt-2 block w-full cursor-pointer rounded border-0 px-2 py-1 text-lg text-white disabled:cursor-default disabled:bg-neutral-400 disabled:text-neutral-200 bg-{accent}-900 hover:bg-{accent}-950"
+          on:click={handleGenerateIdentity}
+          >Generate new identity
         </button>
         <div class="mt-6 text-center text-sm leading-3">
           Do you already have a Nostr address?<br />
@@ -985,10 +1176,15 @@
                 on:click={handleErasePointer}>Clear it</button
               >
             {:else}
-              Do you need a Nostr account?<br />
+              No account yet?<br />
               <button
                 class="cursor-pointer border-0 bg-transparent text-sm text-white underline"
-                on:click={handleCreateAccount}>Sign up now</button
+                on:click={handleLoginGoogle}>Login with Google</button
+              >
+              <span class="px-1">·</span>
+              <button
+                class="cursor-pointer border-0 bg-transparent text-sm text-white underline"
+                on:click={handleGenerateIdentity}>Generate identity</button
               >
             {/if}
           </div>
@@ -1075,7 +1271,7 @@
           <div class="mb-4 text-sm">You are connected to Nostr as</div>
           <a
             target="_blank"
-            href={'https://nosta.me/' + identity.npub}
+            href={'https://njump.me/' + identity.npub}
             class="group text-white no-underline"
           >
             {#if identity.picture || identity.name}
@@ -1107,6 +1303,35 @@
           <div class="mt-6 block break-all text-center text-xs">
             This webpage is using the public key:<br />
             {getPublicKey(clientSecret)}
+          </div>
+        {:else if nsecCopied}
+          <div class="mt-6 block cursor-pointer break-all text-center text-xs">
+            Copied
+          </div>
+        {:else}
+          <div
+            class="mt-6 block cursor-pointer break-all text-center text-xs"
+            on:click={copyNsec}
+            role="button"
+            tabindex="0"
+            on:keydown={e => e.key === 'Enter' && copyNsec()}
+          >
+            Export secret key to clipboard
+            <svg
+              class="ml-1 inline-block h-3 w-3 align-baseline"
+              fill="currentColor"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 52 52"
+              enable-background="new 0 0 52 52"
+            >
+              <path
+                d="M17.4,11.6h17.3c0.9,0,1.6-0.7,1.6-1.6V6.8c0-2.6-2.1-4.8-4.7-4.8h-11c-2.6,0-4.7,2.2-4.7,4.8V10 C15.8,10.9,16.5,11.6,17.4,11.6z"
+              />
+              <path
+                d="M43.3,6h-1.6c-0.5,0-0.8,0.3-0.8,0.8V10c0,3.5-2.8,6.4-6.3,6.4H17.4c-3.5,0-6.3-2.9-6.3-6.4V6.8 c0-0.5-0.3-0.8-0.8-0.8H8.7C6.1,6,4,8.2,4,10.8v34.4C4,47.8,6.1,50,8.7,50h34.6c2.6,0,4.7-2.2,4.7-4.8V10.8C48,8.2,45.9,6,43.3,6z"
+              />
+            </svg>
+            <br />
           </div>
         {/if}
       {/if}
