@@ -7,8 +7,7 @@
     generateSecretKey,
     type VerifiedEvent,
     type NostrEvent,
-    getPublicKey,
-    finalizeEvent
+    getPublicKey
   } from '@nostr/tools/pure'
   import {type SubCloser} from '@nostr/tools/pool'
   import {
@@ -19,22 +18,19 @@
     BUNKER_REGEX
   } from '@nostr/tools/nip46'
   import {NIP05_REGEX} from '@nostr/tools/nip05'
-  import {npubEncode, nsecEncode, decode} from '@nostr/tools/nip19'
-  import {sha256} from '@noble/hashes/sha256'
-  import {
-    trustedKeyDeal,
-    hexPubShard,
-    hexShard
-  } from '@fiatjaf/promenade-trusted-dealer'
+  import {npubEncode, nsecEncode} from '@nostr/tools/nip19'
   import {onMount} from 'svelte'
   import type {Signer} from './signer.js'
-  import * as nip04 from '@nostr/tools/nip04'
-  import * as nip44 from '@nostr/tools/nip44'
   import {createNostrConnectURI} from '@nostr/tools/nip46'
-
   import mediaQueryStore from './mediaQueryStore.js'
   import Spinner from './Spinner.svelte'
   import {loadRelayList} from '@nostr/gadgets/lists'
+  import createNsecSigner from './nsecSigner.js'
+  import {
+    POMEGRANATE_CENTRAL_URL,
+    pomegranateRegister,
+    setupPomegranateProfile
+  } from './pomegranate.js'
 
   const mobileMode = mediaQueryStore('only screen and (max-width: 640px)')
   const lskeys = {
@@ -530,44 +526,17 @@
     ev?.preventDefault?.()
 
     try {
-      const nsec = bunkerInputValue
-      const decoded = decode(nsec)
-      if (decoded.type === 'nsec') {
-        const sk = decoded.data
-        const pk = getPublicKey(sk)
-        plainkey = true
-        signer = Promise.resolve({
-          async getPublicKey() {
-            return pk
-          },
-          async signEvent(event) {
-            return finalizeEvent(event, sk)
-          },
-          async nip04Decrypt(thirdPartyPubkey, ciphertext) {
-            return nip04.decrypt(sk, thirdPartyPubkey, ciphertext)
-          },
-          async nip04Encrypt(thirdPartyPubkey, plaintext) {
-            return nip04.encrypt(sk, thirdPartyPubkey, plaintext)
-          },
-          async nip44Decrypt(thirdPartyPubkey, ciphertext) {
-            const conv = nip44.getConversationKey(sk, thirdPartyPubkey)
-            return nip44.decrypt(ciphertext, conv)
-          },
-          async nip44Encrypt(thirdPartyPubkey, plaintext) {
-            const conv = nip44.getConversationKey(sk, thirdPartyPubkey)
-            return nip44.encrypt(plaintext, conv)
-          }
-        })
+      plainkey = true
+      signer = Promise.resolve(createNsecSigner(bunkerInputValue))
 
-        nostrLogin = true
-        if (!startHidden) open()
-        errorMessage = ''
-        connecting = false
-        connected = true
-        await flushPendingCalls()
-        identify()
-        localStorage.setItem(lskeys.BUNKER_POINTER, nsec)
-      }
+      nostrLogin = true
+      if (!startHidden) open()
+      errorMessage = ''
+      connecting = false
+      connected = true
+      await flushPendingCalls()
+      identify()
+      localStorage.setItem(lskeys.BUNKER_POINTER, bunkerInputValue)
     } catch (error) {
       console.error('failed to decode nsec:', error)
     }
@@ -741,16 +710,6 @@
     }
   }
 
-  const POMEGRANATE_CENTRAL_URL = 'https://auth.njump.me'
-  const POMEGRANATE_OPERATORS = [
-    'https://po.f7z.io',
-    'https://po.njump.me',
-    'https://po.nostrver.se',
-    'https://po.coracle.social',
-    'https://po.jumble.social'
-  ]
-  const POMEGRANATE_THRESHOLD = 2
-
   function handleGenerateIdentity() {
     const sk = generateSecretKey()
     bunkerInputValue = nsecEncode(sk)
@@ -791,81 +750,12 @@
     })
 
     if (accountResp.status === 404) {
-      const sk = generateSecretKey()
-      const session = crypto.randomUUID()
-
-      const skBignum = Array.from(sk).reduce<bigint>(
-        (acc, byte) => (acc << 8n) + BigInt(byte as number),
-        0n
-      )
-      const {shards} = trustedKeyDeal(
-        skBignum,
-        POMEGRANATE_THRESHOLD,
-        POMEGRANATE_OPERATORS.length
-      )
-
-      const regEvent = finalizeEvent(
-        {
-          kind: 20445,
-          created_at: Math.floor(Date.now() / 1000),
-          tags: [
-            ['threshold', String(POMEGRANATE_THRESHOLD)],
-            ...POMEGRANATE_OPERATORS.map((op, i) => [
-              'operator',
-              op,
-              hexPubShard(shards[i].pubShard)
-            ])
-          ],
-          content: ''
-        },
-        sk
-      )
-
-      const regResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/register`, {
-        method: 'POST',
-        body: JSON.stringify(regEvent),
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Token ${token}`,
-          'X-Pomegranate-Session': session
-        }
-      })
-      if (!regResp.ok) {
-        errorMessage = 'Central registration failed'
+      try {
+        await pomegranateRegister(token, email)
+      } catch (err: any) {
+        errorMessage = err.message
         connecting = false
         return
-      }
-
-      const encoder = new TextEncoder()
-      for (let i = 0; i < POMEGRANATE_OPERATORS.length; i++) {
-        const opEvent = finalizeEvent(
-          {
-            kind: 20444,
-            created_at: Math.floor(Date.now() / 1000),
-            tags: [
-              ['central', POMEGRANATE_CENTRAL_URL],
-              ['email', email]
-            ],
-            content: hexShard(shards[i])
-          },
-          sk
-        )
-
-        const opResp = await fetch(`${POMEGRANATE_OPERATORS[i]}/po/register`, {
-          method: 'POST',
-          body: JSON.stringify(opEvent),
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Pomegranate-Operator-Token': bytesToHex(
-              sha256(encoder.encode(session + ':' + POMEGRANATE_OPERATORS[i]))
-            )
-          }
-        })
-        if (!opResp.ok) {
-          errorMessage = `Operator registration failed for ${POMEGRANATE_OPERATORS[i]}`
-          connecting = false
-          return
-        }
       }
 
       accountResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/account`, {
@@ -879,40 +769,14 @@
       return
     }
 
-    const profilesResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/profiles`, {
-      headers: {Authorization: `Token ${token}`}
-    })
-    if (!profilesResp.ok) {
-      errorMessage = 'Failed to get profiles'
+    try {
+      bunkerInputValue = await setupPomegranateProfile(token)
+    } catch (err: any) {
+      errorMessage = err.message
       connecting = false
       return
     }
 
-    let profiles = await profilesResp.json()
-
-    if (!profiles.find((p: any) => p.name === 'default')) {
-      await fetch(`${POMEGRANATE_CENTRAL_URL}/profiles`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Token ${token}`
-        },
-        body: JSON.stringify({name: 'default'})
-      })
-      const refreshResp = await fetch(`${POMEGRANATE_CENTRAL_URL}/profiles`, {
-        headers: {Authorization: `Token ${token}`}
-      })
-      if (refreshResp.ok) profiles = await refreshResp.json()
-    }
-
-    const defaultProfile = profiles.find((p: any) => p.name === 'default')
-    if (!defaultProfile) {
-      errorMessage = 'No default profile available'
-      connecting = false
-      return
-    }
-
-    bunkerInputValue = `bunker://${defaultProfile.handler_pubkey}?relay=${encodeURIComponent(POMEGRANATE_CENTRAL_URL.replace('http', 'ws'))}`
     creating = false
     await handleConnect()
   }
