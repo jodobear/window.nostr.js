@@ -7,9 +7,9 @@ import {
   hexShard
 } from '@fiatjaf/promenade-trusted-dealer'
 
-export const POMEGRANATE_CENTRAL_URL = 'https://auth.njump.me'
+export let POMEGRANATE_CENTRAL_URL = 'https://auth.njump.me'
 
-export const POMEGRANATE_OPERATORS = [
+export let POMEGRANATE_OPERATORS = [
   'https://po.f7z.io',
   'https://po.njump.me',
   'https://po.nostrver.se',
@@ -17,7 +17,7 @@ export const POMEGRANATE_OPERATORS = [
   'https://po.jumble.social'
 ]
 
-export const POMEGRANATE_THRESHOLD = 2
+export let POMEGRANATE_THRESHOLD = 2
 
 export async function pomegranateRegister(token: string, email: string) {
   const sk = generateSecretKey()

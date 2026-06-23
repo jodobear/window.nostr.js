@@ -1,5 +1,6 @@
 import styles from './app.css?inline'
 import App from './App.svelte'
+import * as pomegranate from './pomegranate'
 
 // To customize the widget add data-* attributes to the <script> tag:
 // <script src='wnj.js' data-accent='green' data-position='bottom' data-start-hidden></script>
@@ -21,6 +22,17 @@ if (!script) {
 const d = script?.dataset || {}
 const win = window as any
 const p = win.wnjParams || {}
+
+const pg = pomegranate as any
+if (d.pomegranateCentralUrl) {
+  pg.POMEGRANATE_CENTRAL_URL = d.pomegranateCentralUrl
+}
+if (d.pomegranateOperators) {
+  try { pg.POMEGRANATE_OPERATORS = JSON.parse(d.pomegranateOperators) } catch {}
+}
+if (d.pomegranateThreshold) {
+  pg.POMEGRANATE_THRESHOLD = parseInt(d.pomegranateThreshold, 10)
+}
 
 win.destroyWnj = () => {
   setTimeout(() => {

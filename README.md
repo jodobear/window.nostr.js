@@ -15,25 +15,30 @@ The script supports optional `data-*` attributes on the `<script>` tag to person
 <script src="https://cdn.jsdelivr.net/npm/window.nostr.js/dist/window.nostr.min.js"
   data-accent="green"
   data-position="bottom"
-  data-start-hidden
   data-compact-mode
   data-relays='["wss://bucket.coracle.social","wss://relay.nsec.app"]'
   data-app-name='example app
   data-app-image='https://example.com/logo.png'
+  data-pomegranate-central-url="https://auth.njump.me"
+  data-pomegranate-operators='["https://po.f7z.io","https://po.njump.me","https://po.nostrver.se","https://po.coracle.social","https://po.jumble.social"]'
+  data-pomegranate-threshold="2"
 ></script>
 ```
 
-| Attribute           | Description                                                                            |
-| -----------         | -------------                                                                          |
-| `data-accent`       | Accent color: `cyan` (default), `green`, `purple`, `red`, `orange`, `neutral`, `stone` |
-| `data-position`     | Widget position: `bottom` (default is top)                                             |
-| `data-start-hidden` | Hide minimized widget until user connects (for pages with custom login buttons)        |
-| `data-compact-mode` | Show minimized widget in compact form                                                  |
-| `data-dof`          | Disable automatic overflow fix on mobile                                               |
-| `data-relays`       | JSON array of relay URLs for QR code login                                             |
-| `data-app-name`     | Name of the current page that is sent to bunker signers, defaults to the page hostname |
-| `data-app-image`    | Logo of the current app that is sent to bunker signers, defaults to the page favicon   |
-| `data-app-url`      | Defaults to the current URL (cleaned), if specified must belong to the current domain  |
+| Attribute                      | Description                                                                            |
+| -----------                    | -------------                                                                          |
+| `data-accent`                  | Accent color: `cyan` (default), `green`, `purple`, `red`, `orange`, `neutral`, `stone` |
+| `data-position`                | Widget position: `bottom` (default is top)                                             |
+| `data-start-hidden`            | Hide minimized widget until user connects (for pages with custom login buttons)        |
+| `data-compact-mode`            | Show minimized widget in compact form                                                  |
+| `data-dof`                     | Disable automatic overflow fix on mobile                                               |
+| `data-relays`                  | JSON array of relay URLs for QR code login                                             |
+| `data-app-name`                | Name of the current page that is sent to bunker signers, defaults to the page hostname |
+| `data-app-image`               | Logo of the current app that is sent to bunker signers, defaults to the page favicon   |
+| `data-app-url`                 | Defaults to the current URL (cleaned), if specified must belong to the current domain  |
+| `data-pomegranate-central-url` | Pomegranate central auth URL                                                           |
+| `data-pomegranate-operators`   | JSON array of pomegranate operator URLs                                                |
+| `data-pomegranate-threshold`   | Pomegranate threshold (number of operators needed)                                     |
 
 ## Bookmarklet
 
