@@ -1,16 +1,26 @@
 import styles from './app.css?inline'
 import App from './App.svelte'
 
-// To customize the widget add this code before the <script src='...' inclusion
-// --- --- --- --- --- --- --- --- ---
-// <script>
-//   window.wnjParams = {
-//     position: 'bottom'
-//     accent: 'green' // Supported values: cyan (default), green, purple, red, orange, neutral, stone
-//   }
-// </script>
+// To customize the widget add data-* attributes to the <script> tag:
+// <script src='wnj.js' data-accent='green' data-position='bottom' data-start-hidden></script>
+// Supported accent values: cyan (default), green, purple, red, orange, neutral, stone
 
+let script =
+  document.currentScript || document.querySelector('script[data-wnj]')
+if (!script) {
+  const scripts = document.querySelectorAll('script')
+  for (let i = 0; i < scripts.length; i++) {
+    const s = scripts[i]
+    if (s.src === import.meta.url) {
+      script = s
+      break
+    }
+  }
+}
+
+const d = script?.dataset || {}
 const win = window as any
+const p = win.wnjParams || {}
 
 win.destroyWnj = () => {
   setTimeout(() => {
@@ -32,24 +42,39 @@ const shadowRoot = base.attachShadow({mode: 'open'})
 shadowRoot.appendChild(mountPoint)
 shadowRoot.appendChild(style)
 
+let relays: string[] | undefined
+try {
+  relays = JSON.parse(d.relays || '')
+} catch {
+  /***/
+}
+
 const app = new App({
   target: mountPoint,
   props: {
-    accent: win.wnjParams?.accent || 'cyan',
-    position: win.wnjParams?.position === 'bottom' ? 'bottom' : 'top',
-    startHidden: win.wnjParams?.startHidden,
-    compactMode: win.wnjParams?.compactMode,
-    nostrConnectRelays: win.wnjParams?.nostrConnectRelays || [
-      'wss://bucket.coracle.social',
-      'wss://relay.nsec.app',
-      'wss://nos.lol',
-      'wss://relay.primal.net'
-    ],
-    appMetadata: win.wnjParams?.appMetadata || {}
+    accent: d.accent || p.accent || 'cyan',
+    position: (d.position || p.position) === 'bottom' ? 'bottom' : 'top',
+    startHidden: d.startHidden ? d.startHidden !== 'false' : false,
+    compactMode: d.compactMode ? d.compactMode !== 'false' : false,
+    nostrConnectRelays: relays ||
+      p.nostrConnectRelays || [
+        'wss://bucket.coracle.social',
+        'wss://relay.ditto.pub',
+        'wss://nos.lol',
+        'wss://relay.primal.net'
+      ],
+    appMetadata:
+      d.appName || d.appImage || d.appUrl
+        ? {
+            name: d.appName,
+            image: d.appImage,
+            url: d.appUrl
+          }
+        : p.appMetadata || {}
   }
 })
 
-if (!win.wnjParams?.disableOverflowFix) {
+if (d.dof === undefined && !p.disableOverflowFix) {
   // Inject on the host page a style to avoid weird scrolling on the
   // right/bottom on mobile, if the underlying page has some horizontal
   // scrolling

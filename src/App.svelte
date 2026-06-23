@@ -15,22 +15,24 @@
     type BunkerSignerParams,
     parseBunkerInput,
     type BunkerPointer,
-    BUNKER_REGEX
+    BUNKER_REGEX,
+    type ClientMetadata
   } from '@nostr/tools/nip46'
   import {NIP05_REGEX} from '@nostr/tools/nip05'
   import {npubEncode, nsecEncode} from '@nostr/tools/nip19'
   import {onMount} from 'svelte'
-  import type {Signer} from './signer.js'
+  import type {Signer} from './signer'
   import {createNostrConnectURI} from '@nostr/tools/nip46'
-  import mediaQueryStore from './mediaQueryStore.js'
+  import mediaQueryStore from './mediaQueryStore'
   import Spinner from './Spinner.svelte'
   import {loadRelayList} from '@nostr/gadgets/lists'
-  import createNsecSigner from './nsecSigner.js'
+  import createNsecSigner from './nsecSigner'
+  import {belongsToDomain} from './utils'
   import {
     POMEGRANATE_CENTRAL_URL,
     pomegranateRegister,
     setupPomegranateProfile
-  } from './pomegranate.js'
+  } from './pomegranate'
 
   const mobileMode = mediaQueryStore('only screen and (max-width: 640px)')
   const lskeys = {
@@ -50,12 +52,8 @@
       position
   export let startHidden: boolean
   export let compactMode: boolean
-  export let nostrConnectRelays: string[]
-  export let appMetadata: {
-    name: string
-    image: string
-    url: string
-  }
+  export let relays: string[]
+  export let appMetadata: ClientMetadata
 
   const win = window as any
   let bunkerInput: HTMLInputElement
@@ -236,9 +234,12 @@
     nostrConnectURI = createNostrConnectURI({
       clientPubkey,
       secret: bytesToHex(randomBytes(8)),
-      relays: nostrConnectRelays,
+      relays,
       name: appMetadata.name || location.hostname,
-      url: appMetadata.url || location.href.split('#')[0].split('?')[0],
+      url:
+        (appMetadata.url && belongsToDomain(appMetadata.url, location)
+          ? appMetadata.url
+          : undefined) || location.href.split('#')[0].split('?')[0],
       image:
         appMetadata.image ||
         (

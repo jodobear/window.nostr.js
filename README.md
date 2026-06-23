@@ -9,37 +9,31 @@ It adds a small floating button on the side of the window that users can use to 
 Include `<script src="https://cdn.jsdelivr.net/npm/window.nostr.js/dist/window.nostr.min.js"></script>` in your HTML and proceed to use [`window.nostr`](https://nips.nostr.com/7) normally.
 
 ## Customization
-The script supports some optional configurations to personalize the design:
+The script supports optional `data-*` attributes on the `<script>` tag to personalize the design:
 
 ```
-<script>
-  window.wnjParams = {
-    position: 'bottom',
-    // The only accepted value is 'bottom', default is top
-    accent: 'green',
-    // Supported values: cyan (default), green, purple, red, orange, neutral, stone
-    startHidden: true,
-    // If the host page has a button that call `getPublicKey` to start a
-    // login procedure, the minimized widget can be hidden until connected
-    compactMode: true,
-    // Show the minimized widget in a compact form
-    disableOverflowFix: true,
-    // If the host page on mobile has an horizontal scrolling, the floating
-    // element/modal are pushed to the extreme right/bottom and exit the
-    // viewport. A style is injected in the html/body elements fix this.
-    // This option permit to disable this default behavior
-    nostrConnectRelays: ['wss://bucket.coracle.social', 'wss://relay.nsec.app', 'wss://nos.lol', 'wss://relay.primal.net']
-    // For when prompting the user to a scan a QR code to login.
-    appMetadata: {
-      name: 'example app',
-      image: 'https://example.com/logo.png',
-      url: 'https://example.com',
-    }
-    // Values sent to the remote signer through the QR code, when undefined the current URL and domain name will be used.
-  }
-</script>
-<script src="https://cdn.jsdelivr.net/npm/window.nostr.js/dist/window.nostr.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/window.nostr.js/dist/window.nostr.min.js"
+  data-accent="green"
+  data-position="bottom"
+  data-start-hidden
+  data-compact-mode
+  data-relays='["wss://bucket.coracle.social","wss://relay.nsec.app"]'
+  data-app-name='example app
+  data-app-image='https://example.com/logo.png'
+></script>
 ```
+
+| Attribute           | Description                                                                            |
+| -----------         | -------------                                                                          |
+| `data-accent`       | Accent color: `cyan` (default), `green`, `purple`, `red`, `orange`, `neutral`, `stone` |
+| `data-position`     | Widget position: `bottom` (default is top)                                             |
+| `data-start-hidden` | Hide minimized widget until user connects (for pages with custom login buttons)        |
+| `data-compact-mode` | Show minimized widget in compact form                                                  |
+| `data-dof`          | Disable automatic overflow fix on mobile                                               |
+| `data-relays`       | JSON array of relay URLs for QR code login                                             |
+| `data-app-name`     | Name of the current page that is sent to bunker signers, defaults to the page hostname |
+| `data-app-image`    | Logo of the current app that is sent to bunker signers, defaults to the page favicon   |
+| `data-app-url`      | Defaults to the current URL (cleaned), if specified must belong to the current domain  |
 
 ## Bookmarklet
 
