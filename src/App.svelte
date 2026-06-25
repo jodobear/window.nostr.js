@@ -31,7 +31,9 @@
   import {
     POMEGRANATE_CENTRAL_URL,
     pomegranateRegister,
-    setupPomegranateProfile
+    setupPomegranateProfile,
+    searchForActualCentralURLAnnounced,
+    setCentralUrl
   } from './pomegranate'
 
   const mobileMode = mediaQueryStore('only screen and (max-width: 640px)')
@@ -751,6 +753,14 @@
     })
 
     if (accountResp.status === 404) {
+      const actualCentral = await searchForActualCentralURLAnnounced(email)
+      if (actualCentral && actualCentral !== POMEGRANATE_CENTRAL_URL) {
+        setCentralUrl(actualCentral)
+        connecting = false
+        errorMessage = 'Account found, click again'
+        return
+      }
+
       try {
         await pomegranateRegister(token, email)
       } catch (err: any) {

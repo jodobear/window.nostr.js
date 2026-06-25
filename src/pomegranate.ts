@@ -1,15 +1,19 @@
 import {generateSecretKey, finalizeEvent} from '@nostr/tools/pure'
 import {bytesToHex} from '@noble/hashes/utils'
 import {sha256} from '@noble/hashes/sha256'
+import {argon2id} from '@noble/hashes/argon2'
 import {
   trustedKeyDeal,
   hexPubShard,
-  hexShard
+  hexShard,
 } from '@fiatjaf/promenade-trusted-dealer'
+import {pool} from '@nostr/gadgets/global'
+import {loadRelayList} from '@nostr/gadgets/lists'
 
 export let POMEGRANATE_CENTRAL_URL = 'https://auth.njump.me'
+export function setCentralUrl(url: string) { POMEGRANATE_CENTRAL_URL = url }
 
-export let POMEGRANATE_OPERATORS = [
+export const POMEGRANATE_OPERATORS = [
   'https://po.f7z.io',
   'https://po.njump.me',
   'https://po.nostrver.se',
@@ -17,7 +21,30 @@ export let POMEGRANATE_OPERATORS = [
   'https://po.jumble.social'
 ]
 
-export let POMEGRANATE_THRESHOLD = 2
+export const POMEGRANATE_THRESHOLD = 2
+
+const KIND_SETUP_ANNOUNCEMENT = 16440
+const BIG_RELAYS = [
+  'wss://relay.ditto.pub',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://relay.nostr.band',
+]
+
+const encoder = new TextEncoder()
+
+export async function searchForActualCentralURLAnnounced(email: string): Promise<string | null> {
+  if (!email) return null
+  const hash = bytesToHex(argon2id(encoder.encode(email), 'pomegranate', {t: 1, m: 65536, p: 4}))
+  const results = await pool.querySync(BIG_RELAYS, {kinds: [KIND_SETUP_ANNOUNCEMENT], '#m': [hash], limit: 1}, {maxWait: 5000})
+  if (results.length) {
+    const centralTag = results[0].tags?.find(
+      (t: string[]) => Array.isArray(t) && t[0] === 'central' && typeof t[1] === 'string'
+    )
+    if (centralTag?.[1]) return centralTag[1]
+  }
+  return null
+}
 
 export async function pomegranateRegister(token: string, email: string) {
   const sk = generateSecretKey()
@@ -61,7 +88,6 @@ export async function pomegranateRegister(token: string, email: string) {
   })
   if (!regResp.ok) throw new Error('Central registration failed')
 
-  const encoder = new TextEncoder()
   for (let i = 0; i < POMEGRANATE_OPERATORS.length; i++) {
     const opEvent = finalizeEvent(
       {
@@ -91,6 +117,33 @@ export async function pomegranateRegister(token: string, email: string) {
         `Operator registration failed for ${POMEGRANATE_OPERATORS[i]}`
       )
   }
+
+  const hash = bytesToHex(
+    argon2id(encoder.encode(email), 'pomegranate', {t: 1, m: 65536, p: 4})
+  )
+  const annEvent = finalizeEvent(
+    {
+      kind: KIND_SETUP_ANNOUNCEMENT,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ['m', hash],
+        ['central', POMEGRANATE_CENTRAL_URL]
+      ],
+      content: ''
+    },
+    sk
+  )
+  await Promise.allSettled(
+    pool.publish(
+      [
+        ...BIG_RELAYS,
+        ...(await loadRelayList(annEvent.pubkey)).items
+          .filter(r => r.write)
+          .map(r => r.url)
+      ],
+      annEvent
+    )
+  )
 }
 
 export async function setupPomegranateProfile(token: string): Promise<string> {

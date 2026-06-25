@@ -28,7 +28,7 @@ if (d.pomegranateCentralUrl) {
   pg.POMEGRANATE_CENTRAL_URL = d.pomegranateCentralUrl
 }
 if (d.pomegranateOperators) {
-  try { pg.POMEGRANATE_OPERATORS = JSON.parse(d.pomegranateOperators) } catch {}
+  try { pg.POMEGRANATE_OPERATORS = JSON.parse(d.pomegranateOperators) } catch { /***/ }
 }
 if (d.pomegranateThreshold) {
   pg.POMEGRANATE_THRESHOLD = parseInt(d.pomegranateThreshold, 10)
@@ -68,7 +68,7 @@ const app = new App({
     position: (d.position || p.position) === 'bottom' ? 'bottom' : 'top',
     startHidden: d.startHidden ? d.startHidden !== 'false' : false,
     compactMode: d.compactMode ? d.compactMode !== 'false' : false,
-    nostrConnectRelays: relays ||
+    relays: relays ||
       p.nostrConnectRelays || [
         'wss://bucket.coracle.social',
         'wss://relay.ditto.pub',
