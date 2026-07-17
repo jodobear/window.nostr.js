@@ -741,7 +741,7 @@
         popup!.close()
         resolve(event.data.token)
       }
-      window.addEventListener('message', handler, {once: true})
+      window.addEventListener('message', handler)
     })
 
     const evt = JSON.parse(atob(token))
