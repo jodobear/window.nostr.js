@@ -157,6 +157,50 @@ events in an issue.
 - Mosaico: no source PR is indicated; the remaining host changes are deployment
   automation for the pinned Croissant build.
 
+## Suggested upstream issue: preserve a working relay set during `switch_relays`
+
+Repository: `nbd-wtf/nostr-tools`
+
+Title: `BunkerSigner.fromURI can strand a working NIP-46 connection after switch_relays`
+
+Body:
+
+> With `@nostr/tools` 2.23.8, `BunkerSigner.fromURI()` successfully completes an
+> Amber 6.3.0 `nostrconnect://` handshake over the relays encoded by the client.
+> The signer then requests `switch_relays`; replacing the established relay set
+> can leave subsequent queued calls with no usable response path. The caller
+> eventually sees `No Promise in Promise.any was resolved` even though the
+> connection response was received and decrypted.
+>
+> Passing `skipSwitchRelays: true` avoids the failure, but prevents the signer
+> from controlling relays as NIP-46 intends. Could the implementation validate
+> the proposed relay set and retain the established relays as fallback until at
+> least one proposed relay is usable?
+>
+> Reproduction versions: Amber 6.3.0, `@nostr/tools` 2.23.8,
+> `window.nostr.js` 0.8.1. No private URI or event is required; redacted relay
+> and timing logs can be supplied.
+
+## Nostrord issue template (not ready until one fresh-QR trace is captured)
+
+Title: `NIP-46 QR remains pending after Amber response`
+
+Body fields to fill from the same attempt:
+
+```text
+Nostrord commit/deployment:
+Amber version: 6.3.0
+QR relays (names only):
+Amber application appeared: yes/no
+Amber accepted request at:
+Amber published response at:
+Nostrord remained on QR screen: yes/no
+Browser console error:
+```
+
+Attach only redacted logs. Do not attach the QR, `nostrconnect://` URI, bunker
+URI, connection secret, or encrypted event payload.
+
 ## Update assessment
 
 - Mosaico v0.1.2 is still the latest release.
