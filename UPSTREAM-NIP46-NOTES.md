@@ -145,12 +145,44 @@ Before filing a Nostrord issue, collect one fresh-QR attempt with:
 Do not include the QR URI, connection secret, bunker URI, or full kind 24133
 events in an issue.
 
+## 5. Restoring an authorized QR session replays its one-time secret forever
+
+### Observed
+
+After the browser was suspended or reloaded, the stored Mosaico login remained
+at `Connecting to bunker`. `window.nostr.js` restored the saved
+`BunkerPointer`, called `BunkerSigner.connect()`, and waited without a response
+timeout.
+
+For a client-initiated `nostrconnect://` session, the secret is only for the
+initial handshake. NIP-46 says an optional connection secret is usable for one
+successfully established connection. Replaying it is not a valid liveness
+check, and a signer may ignore it. The existing five-second timer only opened
+the widget; it did not settle or cancel the pending request.
+
+### Upstream-ready patch
+
+- Branch `fix/nip46-session-restore` at `3122213`, stacked on
+  `fix/nip46-qr-pending-calls`.
+- Removes the consumed secret before persisting the bunker pointer.
+- Restores with the persistent client key and relay route, using bounded
+  `ping` rather than another `connect` request.
+- Stops after 15 seconds with an actionable retry state instead of an endless
+  spinner; transient restore failure does not reject the reusable signer
+  promise.
+- `just build` passes.
+
+The repair is deployed in the self-hosted v3 widget. Host health, relay publish,
+and relay readback checks pass after deployment.
+
 ## Branch and issue map
 
 - `window.nostr.js` PR: `fix/nip46-qr-pending-calls` (`74445af`).
 - `window.nostr.js` discussion/stacked PR: `fix/amber-nip46-relay-compat`
   (`be30d8a`), preferably after deciding whether relay fallback belongs in
   `nostr-tools`.
+- `window.nostr.js` stacked PR: `fix/nip46-session-restore` (`3122213`), based
+  on the initial queued-login fix.
 - Croissant PR: `fix/grimoire-chat-deep-link` (`a4692d9`).
 - Amber: issue only if the scanner failure recurs with a fresh QR.
 - Nostrord: issue after the redacted response evidence above is captured.
