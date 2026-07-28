@@ -200,6 +200,9 @@
 
   const bunkerSignerParams: BunkerSignerParams = {
     pool,
+    // Keep using the relays encoded in the nostrconnect:// URI. Some signers
+    // return a relay set that cannot publish the queued login request.
+    skipSwitchRelays: true,
     onauth(url: string) {
       if (creating) {
         showAuth = url
