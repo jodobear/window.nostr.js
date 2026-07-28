@@ -171,6 +171,9 @@
 
   const connectBunkerError =
     'We could not connect to a NIP-46 bunker with that url, are you sure it is set up correctly?'
+  const restoreBunkerError =
+    'The saved bunker session did not respond. Open your signer and retry.'
+  const RESTORE_TIMEOUT_MS = 15_000
   const connectNip05Error =
     'We were not able to connect using this address. For it to work it has to come from a NIP-46 provider.'
 
@@ -266,7 +269,7 @@
         bunkerSignerParams,
         nostrConnectAbort.signal
       )
-      bunkerPointer = bunker.bp
+      bunkerPointer = persistentBunkerPointer(bunker.bp)
       localStorage.setItem(lskeys.BUNKER_POINTER, JSON.stringify(bunkerPointer))
       nostrLogin = true
       connected = true
@@ -294,6 +297,69 @@
       return
     }
     open()
+  }
+
+  function persistentBunkerPointer(bp: BunkerPointer): BunkerPointer {
+    // A NIP-46 connection secret is single-use. Persist the authorized client
+    // key and relay route, but never replay the consumed secret on restoration.
+    return {pubkey: bp.pubkey, relays: [...bp.relays]}
+  }
+
+  async function waitForExistingSession(bunker: BunkerSigner): Promise<void> {
+    let timeout: number | undefined
+    try {
+      await Promise.race([
+        bunker.ping(),
+        new Promise<never>((_, reject) => {
+          timeout = window.setTimeout(
+            () => reject(new Error('saved bunker session timed out')),
+            RESTORE_TIMEOUT_MS
+          )
+        })
+      ])
+    } finally {
+      if (timeout !== undefined) window.clearTimeout(timeout)
+    }
+  }
+
+  async function restoreBunkerSession() {
+    if (!bunkerPointer || connecting || connected) return
+
+    const bunker = BunkerSigner.fromBunker(
+      clientSecret,
+      bunkerPointer,
+      bunkerSignerParams
+    )
+    connecting = true
+    errorMessage = ''
+
+    let connectionTimeout = window.setTimeout(() => {
+      takingTooLong = true
+      state = 'opened'
+    }, 5000)
+
+    try {
+      await waitForExistingSession(bunker)
+      connected = true
+      hasTriedToConnectButFailed = false
+      resolveBunker(bunker)
+      await flushPendingCalls()
+      await identify()
+      close()
+    } catch (err) {
+      await bunker.close()
+      connected = false
+      hasTriedToConnectButFailed = true
+      errorMessage = restoreBunkerError
+      state = 'opened'
+    } finally {
+      window.clearTimeout(connectionTimeout)
+      connecting = false
+      takingTooLong = false
+      showAuth = null
+      showLogin = null
+      showConfirmAction = null
+    }
   }
 
   reset()
@@ -409,6 +475,12 @@
           identify()
         } else {
           bunkerPointer = JSON.parse(data) as BunkerPointer
+          bunkerPointer = persistentBunkerPointer(bunkerPointer)
+          localStorage.setItem(
+            lskeys.BUNKER_POINTER,
+            JSON.stringify(bunkerPointer)
+          )
+          nostrLogin = true
 
           // rebuild a bunker url from the pointer data so we can fill in the input
           let bunkerURL = new URL(`bunker://${bunkerPointer.pubkey}`)
@@ -421,10 +493,9 @@
           bunkerInputValue = bunkerURL.toString()
           // ~
 
-          identify()
-
-          // we must connect here so identify() works because we can't rely on the bunker params to read our pubkey
-          connect()
+          // The client key is already authorized. Verify the stored session
+          // without replaying the one-time connect secret.
+          restoreBunkerSession()
         }
       }
     }
@@ -500,6 +571,11 @@
   async function handleConnect(ev?: SubmitEvent) {
     ev?.preventDefault?.()
     plainkey = false
+
+    if (bunkerPointer && hasTriedToConnectButFailed) {
+      await restoreBunkerSession()
+      return
+    }
 
     try {
       bunkerPointer = await parseBunkerInput(bunkerInputValue)
@@ -595,6 +671,7 @@
         await b.switchRelays()
       }
 
+      bunkerPointer = persistentBunkerPointer(b.bp)
       localStorage.setItem(lskeys.BUNKER_POINTER, JSON.stringify(bunkerPointer))
       resolveBunker(b)
       await flushPendingCalls()
@@ -1049,7 +1126,7 @@
         {#if !connecting}
           <div class="mt-6 text-center text-sm leading-3">
             {#if hasTriedToConnectButFailed}
-              Is this bunker provider broken?<br />
+              Open your signer and press Connect to retry.<br />
               <button
                 class="cursor-pointer border-0 bg-transparent text-sm text-white underline"
                 on:click={handleErasePointer}>Clear it</button
